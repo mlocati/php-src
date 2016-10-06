@@ -1062,7 +1062,7 @@ function error_report($testname, $logname, $tested)
 	}
 }
 
-function system_with_timeout($commandline, $env = null, $stdin = null, $captureStdOut = true, $captureStdErr = true)
+function system_with_timeout($commandline, $env = null, $stdin = null)
 {
 	global $leak_check, $cwd;
 
@@ -1073,16 +1073,11 @@ function system_with_timeout($commandline, $env = null, $stdin = null, $captureS
 		$bin_env[$key] = $value;
 	}
 
-	$descriptorspec = array(
+	$proc = proc_open($commandline, array(
 		0 => array('pipe', 'r'),
-	);
-	if ($captureStdOut) {
-		$descriptorspec[1] = array('pipe', 'w');
-	}
-	if ($captureStdErr) {
-		$descriptorspec[2] = array('pipe', 'w');
-	}
-	$proc = proc_open($commandline, $descriptorspec, $pipes, $cwd, $bin_env, array('suppress_errors' => true, 'binary_pipes' => true));
+		1 => array('pipe', 'w'),
+		2 => array('pipe', 'w')
+		), $pipes, $cwd, $bin_env, array('suppress_errors' => true, 'binary_pipes' => true));
 
 	if (!$proc) {
 		return false;
@@ -1112,13 +1107,7 @@ function system_with_timeout($commandline, $env = null, $stdin = null, $captureS
 			proc_terminate($proc, 9);
 			return $data;
 		} else if ($n > 0) {
-			if ($captureStdOut) {
-				$line = fread($pipes[1], 8192);
-			} elseif ($captureStdErr) {
-				$line = fread($pipes[2], 8192);
-			} else {
-				$line = '';
-			}
+			$line = fread($pipes[1], 8192);
 			if (strlen($line) == 0) {
 				/* EOF */
 				break;
@@ -1348,19 +1337,6 @@ TEST $file
 		junit_mark_test_as('BORK', $shortname, $tested_file, 0, $bork_info);
 		return 'BORKED';
 	}
-
-	if (isset($section_text['CAPTURE_STDIO'])) {
-		$captureStdOut = stripos($section_text['CAPTURE_STDIO'], 'STDOUT') !== false;
-		$captureStdErr = stripos($section_text['CAPTURE_STDIO'], 'STDERR') !== false;
-	} else {
-		$captureStdOut = true;
-		$captureStdErr = true;
-	}
-	if ($captureStdOut && $captureStdErr) {
-		$cmdRedirect = ' 2>&1';
-	} else {
-		$cmdRedirect = '';
-    }
 
 	$tested = trim($section_text['TEST']);
 
@@ -1774,7 +1750,7 @@ TEST $file
 		}
 
 		save_text($tmp_post, $request);
-		$cmd = "$php $pass_options $ini_settings -f \"$test_file\"$cmdRedirect < \"$tmp_post\"";
+		$cmd = "$php $pass_options $ini_settings -f \"$test_file\" 2>&1 < \"$tmp_post\"";
 
 	} elseif (array_key_exists('PUT', $section_text) && !empty($section_text['PUT'])) {
 
@@ -1808,7 +1784,7 @@ TEST $file
 		}
 
 		save_text($tmp_post, $request);
-		$cmd = "$php $pass_options $ini_settings -f \"$test_file\"$cmdRedirect < \"$tmp_post\"";
+		$cmd = "$php $pass_options $ini_settings -f \"$test_file\" 2>&1 < \"$tmp_post\"";
 
 	} else if (array_key_exists('POST', $section_text) && !empty($section_text['POST'])) {
 
@@ -1825,7 +1801,7 @@ TEST $file
 			$env['CONTENT_LENGTH'] = $content_length;
 		}
 
-		$cmd = "$php $pass_options $ini_settings -f \"$test_file\"$cmdRedirect < \"$tmp_post\"";
+		$cmd = "$php $pass_options $ini_settings -f \"$test_file\" 2>&1 < \"$tmp_post\"";
 
 	} else if (array_key_exists('GZIP_POST', $section_text) && !empty($section_text['GZIP_POST'])) {
 
@@ -1840,7 +1816,7 @@ TEST $file
 		$env['CONTENT_TYPE']   = 'application/x-www-form-urlencoded';
 		$env['CONTENT_LENGTH'] = $content_length;
 
-		$cmd = "$php $pass_options $ini_settings -f \"$test_file\"$cmdRedirect < \"$tmp_post\"";
+		$cmd = "$php $pass_options $ini_settings -f \"$test_file\" 2>&1 < \"$tmp_post\"";
 
 	} else if (array_key_exists('DEFLATE_POST', $section_text) && !empty($section_text['DEFLATE_POST'])) {
 		$post = trim($section_text['DEFLATE_POST']);
@@ -1853,7 +1829,7 @@ TEST $file
 		$env['CONTENT_TYPE']   = 'application/x-www-form-urlencoded';
 		$env['CONTENT_LENGTH'] = $content_length;
 
-		$cmd = "$php $pass_options $ini_settings -f \"$test_file\"$cmdRedirect < \"$tmp_post\"";
+		$cmd = "$php $pass_options $ini_settings -f \"$test_file\" 2>&1 < \"$tmp_post\"";
 
 	} else {
 
@@ -1861,7 +1837,7 @@ TEST $file
 		$env['CONTENT_TYPE']   = '';
 		$env['CONTENT_LENGTH'] = '';
 
-		$cmd = "$php $pass_options $ini_settings -f \"$test_file\" $args$cmdRedirect";
+		$cmd = "$php $pass_options $ini_settings -f \"$test_file\" $args 2>&1";
 	}
 
 	if ($leak_check) {
@@ -1897,7 +1873,7 @@ COMMAND $cmd
 
 	junit_start_timer($shortname);
 
-	$out = system_with_timeout($cmd, $env, isset($section_text['STDIN']) ? $section_text['STDIN'] : null, $captureStdOut, $captureStdErr);
+	$out = system_with_timeout($cmd, $env, isset($section_text['STDIN']) ? $section_text['STDIN'] : null);
 
 	junit_finish_timer($shortname);
 
