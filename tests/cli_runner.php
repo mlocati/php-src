@@ -116,9 +116,7 @@ class CLIRunner
         $result = array();
 
         $code_file = $this->get_temp_file("<?php\n$code");
-        $descriptorspec = array(
-            0 => array('pipe', 'rb'),
-        );
+        $descriptorspec = array();
         $cmd = static::escape_file_name($this->php_executable);
         // No configuration (ini) files will be used
         $cmd .= ' -n';
@@ -179,8 +177,6 @@ class CLIRunner
         if ($process === false) {
             throw new Exception('proc_open() failed');
         }
-        fclose($pipes[0]);
-        unset($pipes[0]);
 
         if ($captureStdOut === static::CAPTURE_PIPED || $captureStdErr === static::CAPTURE_PIPED) {
             for (; ;) {
