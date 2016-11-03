@@ -17,45 +17,24 @@
 param([Byte]$bits=0)
 
 # Setup preferences variables
-
 $ErrorActionPreference = "Stop"
 $WarningPreference = "Stop"
 $ConfirmPreference = "None"
 $ProgressPreference = "SilentlyContinue"
 
-# Define some functions
+# Configuration
+New-Variable -Name 'SDK_REMOTE' -Option Constant -Value 'https://github.com/OSTC/php-sdk-binary-tools.git'
+New-Variable -Name 'SDK_BRANCH' -Option Constant -Value 'new_binary_tools'
 
-function GetArchive([string]$remote, [string]$local) {
-	if (!(Test-Path -Path $local)) {
-		Write-Host -NoNewline "Downloading: $remote... "
-		Invoke-WebRequest -Uri $remote -Method "Get" -OutFile $local
-		Write-Host "done."
-	}
-}
-function Unzip([string]$zipFile, [string]$destinationDirectory) {
-	if (!(Test-Path -Path $destinationDirectory)) {
-		Write-Host -NoNewline "Extracting: $zipFile... "
-		Add-Type -AssemblyName "System.IO.Compression.FileSystem"
-		[System.IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $destinationDirectory)
-		Write-Host "done."
-	}
-}
-
-function Un7z([string]$7zipFile, [string]$destinationDirectory) {
-	Write-Host -NoNewline "Extracting: $7zipFile... "
-	& $7zipExe x -bd -y -o"$destinationDirectory" "$7zipFile" | Out-Null
-	if (!($?)) {
-		Write-Host "failed!"
-		exit 1
-	}
-	Write-Host "done."
-}
-
-# Setup variables
+# Setup variables - Step 1
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $sourceDirectory = Split-Path -Path $scriptDirectory -Parent
 $tempDirectory = Join-Path -Path $scriptDirectory -ChildPath "temp"
+$sdkDirectory = Join-Path -Path $tempDirectory -ChildPath "sdk"
 $lastBuiltBitsFile = Join-Path -Path $tempDirectory -ChildPath "last.bits"
+$taskFile = Join-Path -Path $tempDirectory -ChildPath "task.cmd"
+
+# Determine the bits of the last/previous build
 $previousBits = 0
 if (Test-Path -Path $lastBuiltBitsFile) {
 	switch (Get-Content -LiteralPath $lastBuiltBitsFile -ReadCount 1) { 
@@ -67,6 +46,8 @@ if (Test-Path -Path $lastBuiltBitsFile) {
 		}
 	}
 }
+
+# Determine the bits of this build
 if ($bits -eq 0) {
 	if ($previousBits -eq 0) {
 		if ($env:Platform -eq "x64") {
@@ -96,89 +77,77 @@ switch ($bits) {
 		exit 1
 	}
 }
-$archivesDirectory = Join-Path -Path $tempDirectory -ChildPath "archives"
-$7zipArchive = Join-Path -Path $archivesDirectory -ChildPath "7zip.zip"
-$7zipFolder = Join-Path -Path $archivesDirectory -ChildPath "7zip"
-$7zipExe = Join-Path -Path $7zipFolder -ChildPath "7za.exe"
-$toolsArchive = Join-Path -Path $archivesDirectory -ChildPath "php-sdk-binary-tools.zip"
-$toolsDirectory = Join-Path -Path $tempDirectory -ChildPath "tools"
-$dependenciesArchive = Join-Path -Path $archivesDirectory -ChildPath "deps-$architectureName.7z"
-$dependenciesDirectory = Join-Path -Path $tempDirectory -ChildPath "deps-$architectureName"
-$objOutDirectory = Join-Path -Path $tempDirectory -ChildPath "obj-$architectureName"
+
+# Setup variables - Step 2
+$sdkStarter = Join-Path -Path $sdkDirectory -ChildPath "phpsdk-vc14-$architectureName.bat"
 $visualStudioRoot=$env:VS140COMNTOOLS
 $visualStudioRoot = Split-Path -Path $visualStudioRoot -Parent
 $visualStudioRoot = Split-Path -Path $visualStudioRoot -Parent
 $vcvarsall = Join-Path -Path $visualStudioRoot -ChildPath "VC"
 $vcvarsall = Join-Path -Path $vcvarsall -ChildPath "vcvarsall.bat"
+$objOutDirectory = Join-Path -Path $tempDirectory -ChildPath "obj-$architectureName"
 $outputDirectory = Join-Path -Path $scriptDirectory -ChildPath "out-$architectureName"
-$scriptFile = Join-Path -Path $tempDirectory -ChildPath "compile.cmd"
+
+# Check to see if we need to configure and build, or only build
 $configure = $true
-if (Test-Path $outputDirectory) {
-	if ($bits -eq $previousBits) {
-		$configure = $false
-	} else {
-		Remove-Item -Recurse -Force -LiteralPath $outputDirectory
+if (Test-Path $objOutDirectory) {
+	if (Test-Path $outputDirectory) {
+		if ($bits -eq $previousBits) {
+			$configure = $false
+		}
 	}
 }
+
+# Prepare the directory structure
+if (!(Test-Path -Path $tempDirectory)) {
+	New-Item -Path $tempDirectory -ItemType "directory" | Out-Null
+}
 if ($configure) {
+	if (Test-Path -Path $lastBuiltBitsFile) {
+		Remove-Item -LiteralPath $lastBuiltBitsFile
+	}
 	if (Test-Path -Path $objOutDirectory) {
 		Remove-Item -Recurse -LiteralPath $objOutDirectory
 	}
-	if (Test-Path -Path $lastBuiltBitsFile) {
-		Remove-Item -LiteralPath $lastBuiltBitsFile
+	if (Test-Path -Path $outputDirectory) {
+		Remove-Item -Recurse -LiteralPath $outputDirectory
 	}
 }
 if (!(Test-Path -Path $objOutDirectory)) {
 	New-Item -Path $objOutDirectory -ItemType "directory" | Out-Null
 }
-
-# Prepare the required tools and dependencies
-if (!(Test-Path -Path $tempDirectory)) {
-	New-Item -Path $tempDirectory -ItemType "directory" | Out-Null
-}
-if (!(Test-Path -Path $archivesDirectory)) {
-	New-Item -Path $archivesDirectory -ItemType "directory" | Out-Null
-}
-GetArchive "http://www.7-zip.org/a/7za920.zip" $7zipArchive
-GetArchive "http://windows.php.net/downloads/php-sdk/php-sdk-binary-tools-20110915.zip" $toolsArchive
-GetArchive "http://windows.php.net/downloads/php-sdk/deps-master-vc14-$architectureName.7z" $dependenciesArchive
-
-# Prepare 7-zip
-Unzip $7zipArchive $7zipFolder
-
-# Decompress the PHP SDK Binary tools
-Unzip $toolsArchive $toolsDirectory
-
-# Decompress dependencies archive
-if (!(Test-Path -Path $dependenciesDirectory)) {
-	Un7z $dependenciesArchive $archivesDirectory
-	$un7z = Join-Path -Path $archivesDirectory -ChildPath "deps"
-	Move-Item -Path $un7z -Destination $dependenciesDirectory
+if (!(Test-Path -Path $outputDirectory)) {
+	New-Item -Path $outputDirectory -ItemType "directory" | Out-Null
 }
 
-# Build the build script
-$batch = @"
+# Checkout/update SDK
+if (Test-Path -Path $sdkDirectory) {
+	Write-Host "Fetching remote SDK repository"
+	git --git-dir="$sdkDirectory\.git" --work-tree="$sdkDirectory" fetch --prune origin
+	Write-Host "Checkout SDK repository branch"
+	git --git-dir="$sdkDirectory\.git" --work-tree="$sdkDirectory" checkout --force -B $SDK_BRANCH remotes/origin/$SDK_BRANCH --
+} else {
+	Write-Host "Cloning remote SDK repository"
+	git clone --branch $SDK_BRANCH $SDK_REMOTE "$sdkDirectory"
+}
+
+# Build the task script
+$task = @"
 @echo off
-setlocal
-
-set PATH=%SystemRoot%\System32;%SystemRoot%
 
 if "%APPVEYOR%" equ "True" rmdir /s /q C:\cygwin >NUL 2>NUL
 
 call `"$vcvarsall`" $architectureName2
 if errorlevel 1 exit /b 1
-call `"$toolsDirectory\bin\phpsdk_setvars.bat`"
-if errorlevel 1 exit /b 1
+
 cd /D `"$sourceDirectory`"
 if errorlevel 1 exit /b 1
 "@
 if ($configure) {
-	$batch = @"
-$batch
+	$task = @"
+$task
 nmake clean >NUL 2>NUL
 call buildconf.bat --force
-if errorlevel 1 exit /b 1
-mkdir "$outputDirectory"
 if errorlevel 1 exit /b 1
 call configure.bat ^
 	--enable-snapshot-build ^
@@ -195,8 +164,8 @@ echo $bits>`"$lastBuiltBitsFile`"
 
 "@
 }
-$batch = @"
-$batch
+$task = @"
+$task
 
 nmake /NOLOGO /S
 if errorlevel 1 exit /b 1
@@ -207,18 +176,19 @@ if errorlevel 1 exit /b 1
 exit /b 0
 "@
 
+# Executing the build script
 if ($configure) {
 	Write-Host "Configuring and compiling for $bits bits"
 } else {
 	Write-Host "Compiling for $bits bits"
 }
-$batch | Out-File -FilePath $scriptFile -Encoding "ascii"
+$task | Out-File -FilePath $taskFile -Encoding "ascii"
 
 $ErrorActionPreference = "SilentlyContinue"
-& $scriptFile
+& $sdkStarter "$taskFile"
 $scriptExitCode = $LastExitCode
 $ErrorActionPreference = "Stop"
-Remove-Item -LiteralPath $scriptFile
+Remove-Item -LiteralPath $taskFile
 if ($scriptExitCode -ne 0) {
 	Write-Host "Build script failed!"
 	exit 1
